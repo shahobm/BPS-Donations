@@ -45,7 +45,7 @@ h2 {
 /* ---------- Masthead ---------- */
 .masthead {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 14px;
@@ -58,10 +58,21 @@ h2 {
   font-size: 1.6rem;
   line-height: 1.1;
 }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.logo { flex: none; width: 56px; height: 56px; border-radius: 50%; display: block; }
 .masthead p { margin: 0; color: var(--muted); font-size: 0.95rem; text-align: right; }
 @media (max-width: 480px) {
-  .masthead { flex-direction: column; align-items: flex-start; gap: 2px; }
-  .masthead p { text-align: left; }
+  /* Logo on the left, title and subtitle stacked beside it */
+  .masthead {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    column-gap: 12px;
+    row-gap: 2px;
+    align-items: end;
+  }
+  .brand { display: contents; }
+  .logo { grid-row: 1 / span 2; align-self: center; }
+  .masthead p { text-align: left; align-self: start; }
 }
 
 /* ---------- Score ---------- */
