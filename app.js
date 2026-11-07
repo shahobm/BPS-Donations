@@ -15,6 +15,11 @@ const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD',
 // Whole dollars; "+ 0" turns -0 into 0 so small negatives don't show as "-$0"
 const money = { format: n => usd.format(Math.round(n) + 0) };
 const cents = n => Math.round(n * 100) / 100; // strips float drift like -40.80000000000015
+// Preview any balance with ?mock=120 in the URL (sheet balance is ignored)
+const MOCK = (() => {
+  const v = new URLSearchParams(location.search).get('mock');
+  return v !== null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+})();
 
 // ===== Google Sheets (gviz) helpers =====
 function gvizUrl(params) {
@@ -80,6 +85,7 @@ function render(balance) {
 
   document.documentElement.style.setProperty('--p', pct);
   const track = $('track');
+  track.classList.toggle('behind', balance < 0); // marker sits left of the start tick
   track.setAttribute('aria-valuemax', GOAL);
   track.setAttribute('aria-valuenow', Math.max(0, Math.min(GOAL, balance)));
   track.setAttribute('aria-valuetext', `${money.format(balance)} of ${money.format(GOAL)}`);
@@ -141,7 +147,7 @@ async function refresh() {
     ]);
 
     let ok = true;
-    const raw = bal.status === 'fulfilled' ? bal.value?.[0]?.[0] : null;
+    const raw = MOCK ?? (bal.status === 'fulfilled' ? bal.value?.[0]?.[0] : null);
     if (typeof raw === 'number' && Number.isFinite(raw)) {
       render(cents(raw));
     } else {

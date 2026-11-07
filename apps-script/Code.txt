@@ -1,0 +1,246 @@
+// ===== Configuration =====
+const HEADERS = ['Date','Source','Direction','Counterparty','Amount','Note','Transaction ID','Fee','Net'];
+const VENMO_TARGET_HANDLE = '@bellinghampickup';
+
+const VENMO_FEE_PERCENT = 0.019; // 1.9%
+const VENMO_FEE_FIXED = 0.10;    // plus $0.10 per received payment
+
+const DEDUCTION_AMOUNT = 250;
+const DEDUCTION_START = '2026-11-11'; // first Wednesday to charge
+const DEDUCTION_LABEL = 'Weekly deduction';
+
+const VENMO_QUERY =
+  '(from:shahobmmousavi@gmail.com OR from:venmo@venmo.com) ' +
+  '(subject:"paid you" OR subject:"you paid" OR subject:"to your Venmo account")';
+
+// ===== Setup =====
+function setup() {
+  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('logPayments').timeBased().everyMinutes(10).create();
+  logPayments(); // initial backfill
+}
+
+// ===== Main (runs every 10 minutes) =====
+function logPayments() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return; // another run is in progress
+  try {
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName('Transactions') || ss.insertSheet('Transactions');
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]); // keeps header current
+
+    // Plain-text columns: keeps long IDs intact and stops email text
+    // that starts with "=" from being treated as a formula
+    ['D:D', 'F:F', 'G:G'].forEach(r => sh.getRange(r).setNumberFormat('@'));
+    sh.getRange('H:I').setNumberFormat('0.00');
+
+    backfillFees(sh); // fills Fee/Net on older rows that don't have them yet
+
+    const last = sh.getLastRow();
+    const seen = new Set(last > 1
+      ? sh.getRange(2, 7, last - 1, 1).getValues().flat().map(String) : []);
+
+    const rows = [].concat(collectVenmo(seen), collectZelle(seen), collectDeductions(seen));
+    if (rows.length) {
+      rows.sort((a, b) => a[0] - b[0]);
+      sh.getRange(sh.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ===== Fee helpers =====
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function venmoFee(gross) {
+  return round2(gross * VENMO_FEE_PERCENT + VENMO_FEE_FIXED);
+}
+
+// Fills Fee and Net for existing rows where Fee is blank
+function backfillFees(sh) {
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const data = sh.getRange(2, 1, last - 1, 9).getValues();
+  let changed = false;
+  const out = data.map(r => {
+    if (r[7] === '' || r[7] === null) {
+      const gross = Number(r[4]) || 0;
+      const fee = (r[1] === 'Venmo' && r[2] === 'Received') ? venmoFee(gross) : 0;
+      changed = true;
+      return [fee, round2(gross - fee)];
+    }
+    return [r[7], r[8]];
+  });
+  if (changed) sh.getRange(2, 8, out.length, 2).setValues(out);
+}
+
+// ===== Venmo timestamp helpers =====
+// Transaction IDs can be all digits or alphanumeric (e.g. 5M338921LF515081Y)
+function venmoId(body, msg) {
+  return ((body.match(/Transaction ID<\/h3>\s*<p[^>]*>\s*([A-Za-z0-9]+)\s*</) || [])[1]) || msg.getId();
+}
+
+// Payment date + time. The Venmo email body only has a date ("Nov 5, 2026"),
+// so the time comes from when the email arrived:
+//  - direct email, or a forward sent the same day -> the email's timestamp
+//  - forward sent on a later day -> the payment date at midnight (time unknown;
+//    using the forward's time would invent one)
+function venmoWhen(msg, text) {
+  const received = msg.getDate();
+  const dm = text.match(/Transaction details\s*Date\s+([A-Za-z]{3} \d{1,2}, \d{4})/);
+  if (!dm) return received;
+  const parsed = new Date(dm[1]);
+  if (isNaN(parsed)) return received;
+
+  const tz = Session.getScriptTimeZone();
+  const sameDay = Utilities.formatDate(parsed, tz, 'yyyy-MM-dd') ===
+                  Utilities.formatDate(received, tz, 'yyyy-MM-dd');
+  return sameDay ? received : parsed;
+}
+
+// ===== Venmo (forwarded from shahobmmousavi@gmail.com, or direct from Venmo) =====
+function collectVenmo(seen) {
+  const rows = [];
+  const threads = GmailApp.search(VENMO_QUERY, 0, 200);
+
+  threads.forEach(th => th.getMessages().forEach(msg => {
+    const body = msg.getBody();
+    const text = htmlToText(body);
+
+    // Strip any "Fwd:" / "Re:" prefixes before matching
+    const subj = msg.getSubject().replace(/^\s*((fwd?|re):\s*)+/i, '').trim();
+    let m, dir, cp, amt;
+    if ((m = subj.match(/^(.+?) paid you \$([\d,]+\.\d{2})$/))) {
+      dir = 'Received'; cp = m[1]; amt = parseFloat(m[2].replace(/,/g, ''));
+    } else if ((m = subj.match(/^You paid (.+?) \$([\d,]+\.\d{2})$/))) {
+      dir = 'Sent'; cp = m[1]; amt = -parseFloat(m[2].replace(/,/g, ''));
+    } else if ((m = subj.match(/^(.+?) paid \$([\d,]+\.\d{2}) to your Venmo account/))) {
+      dir = 'Received'; cp = m[1]; amt = parseFloat(m[2].replace(/,/g, ''));
+    } else return;
+
+    // Only accept transactions sent to the target Venmo handle
+    const sentTo = ((body.match(/Sent to<\/h3>\s*<p[^>]*>\s*(@[\w.-]+)\s*</i) || [])[1] || '').toLowerCase();
+    if (sentTo !== VENMO_TARGET_HANDLE.toLowerCase()) return;
+
+    const id = venmoId(body, msg);
+    if (seen.has(id)) return;
+    seen.add(id);
+
+    // Note: original emails have a class; forwarded copies don't, so fall back to visible text
+    let note = ((body.match(/class="transaction-note[^"]*"[^>]*>([^<]*)</) || [])[1]) || '';
+    if (!note) {
+      note = (text.match(/\$\s+[\d,]+\s+\.\s+\d{2}\s+([\s\S]*?)\s*See transaction/) || [])[1] || '';
+    }
+    note = decodeEntities(note).trim();
+
+    const when = venmoWhen(msg, text);
+    const fee = dir === 'Received' ? venmoFee(amt) : 0;
+    rows.push([when, 'Venmo', dir, cp, amt, note, id, fee, round2(amt - fee)]);
+  }));
+  return rows;
+}
+
+// ===== One-time: add times to existing date-only Venmo rows =====
+// Run manually once from the editor (select backfillVenmoTimes > Run).
+// Only touches Venmo rows whose time is exactly midnight; safe to re-run.
+function backfillVenmoTimes() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('logPayments is running; try again in a minute.');
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName('Transactions');
+    const last = sh.getLastRow();
+    if (last < 2) return;
+    const range = sh.getRange(2, 1, last - 1, 7); // A..G
+    const data = range.getValues();
+
+    // Map transaction ID -> timestamp from the emails still in Gmail
+    const times = {};
+    GmailApp.search(VENMO_QUERY, 0, 500).forEach(th => th.getMessages().forEach(msg => {
+      const body = msg.getBody();
+      times[venmoId(body, msg)] = venmoWhen(msg, htmlToText(body));
+    }));
+
+    let updated = 0;
+    const dates = data.map(r => {
+      const d = r[0], id = String(r[6]);
+      const dateOnly = d instanceof Date &&
+        d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0;
+      if (r[1] === 'Venmo' && dateOnly && times[id] instanceof Date && times[id].getTime() !== d.getTime()) {
+        updated++;
+        return [times[id]];
+      }
+      return [d];
+    });
+    if (updated) sh.getRange(2, 1, dates.length, 1).setValues(dates);
+    Logger.log('Venmo rows updated with times: ' + updated);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ===== Zelle (Peoples Bank) =====
+function collectZelle(seen) {
+  const rows = [];
+  const threads = GmailApp.search('from:donotreply@eservices.peoplesbank-wa.com subject:"sent you"', 0, 200);
+  threads.forEach(th => th.getMessages().forEach(msg => {
+    const subj = msg.getSubject();
+    const m = subj.match(/sent you \$([\d,]+\.\d{2})/i);
+    const who = subj.match(/Notification - (.+?) sent you/i);
+    if (!m || !who) return;
+
+    const text = htmlToText(msg.getBody());
+    const id = ((text.match(/AlertID\s*\((\d+)\)/i) || [])[1]) || msg.getId();
+    if (seen.has(id)) return;
+    seen.add(id);
+
+    const note = ((text.match(/your account\.\s*((?:(?!your account\.)[\s\S])*?)\s*Access Account/i) || [])[1] || '').trim();
+    const amt = parseFloat(m[1].replace(/,/g, ''));
+    rows.push([msg.getDate(), 'Zelle', 'Received', who[1], amt, note, id, 0, amt]);
+  }));
+  return rows;
+}
+
+// ===== Weekly deduction =====
+function collectDeductions(seen) {
+  const rows = [];
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const [y, mo, d] = DEDUCTION_START.split('-').map(Number);
+
+  let day = new Date(y, mo - 1, d, 19, 30);
+  while (day.getDay() !== 3) day.setDate(day.getDate() + 1); // align to Wednesday
+
+  while (day <= now) {
+    const id = 'DEDUCT-' + Utilities.formatDate(day, tz, 'yyyy-MM-dd');
+    if (!seen.has(id)) {
+      seen.add(id);
+      rows.push([new Date(day), 'Scheduled', 'Deduction', DEDUCTION_LABEL, -DEDUCTION_AMOUNT, '', id, 0, -DEDUCTION_AMOUNT]);
+    }
+    day.setDate(day.getDate() + 7);
+  }
+  return rows;
+}
+
+// ===== Helpers =====
+function htmlToText(html) {
+  return decodeEntities(
+    html
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+  ).replace(/\s+/g, ' ').trim();
+}
+
+function decodeEntities(s) {
+  return s
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&'); // last, so "&amp;lt;" isn't double-decoded
+}

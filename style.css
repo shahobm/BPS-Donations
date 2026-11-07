@@ -85,7 +85,7 @@ h2 {
 .track {
   position: relative;
   height: 10px;
-  margin: 0 11px; /* room for the marker at both ends */
+  margin: 0 11px 0 24px; /* room for the marker; extra on the left for the "behind" spot */
   border-radius: 999px;
   background: var(--rule);
 }
@@ -122,6 +122,8 @@ h2 {
   box-shadow: 0 0 0 6px rgba(47, 174, 95, 0.2);
   transition: left 1s cubic-bezier(.2, .8, .2, 1);
 }
+/* Balance below zero: park the marker just left of the Last Field Rental tick */
+.track.behind .marker { left: -10px; }
 
 .ends {
   display: flex;
