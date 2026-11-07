@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BPS Donations</title>
+  <meta name="description" content="Live donation status for Bellingham Pickup Soccer's weekly field rental.">
+  <meta name="theme-color" content="#000000">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="masthead">
+      <h1>Bellingham Pickup Soccer</h1>
+      <p>Field Rental and Insurance Tracker</p>
+    </header>
+
+    <section class="score" aria-live="polite">
+      <div id="balance" class="amount">$0</div>
+      <p class="caption" id="caption">Loading the latest total</p>
+    </section>
+
+    <section class="match" aria-label="Progress toward next rental">
+      <div class="track" id="track" role="progressbar" aria-valuemin="0" aria-valuenow="0">
+        <div class="fill" id="fill"></div>
+        <div class="marker" id="marker"></div>
+      </div>
+      <div class="ends">
+        <span>Last Field Rental</span>
+        <span id="nextLabel">Next Rental</span>
+      </div>
+    </section>
+
+    <section class="recent">
+      <h2>Recent donations</h2>
+      <ul id="recent" class="list">
+        <li class="empty">Loading donations</li>
+      </ul>
+    </section>
+
+    <section class="donate">
+      <h2>Donate</h2>
+      <div class="donate-options">
+        <a class="donate-btn venmo" href="https://venmo.com/u/bellinghampickup" target="_blank" rel="noopener">
+          <span class="label">Pay with Venmo</span>
+          <span class="handle">@bellinghampickup</span>
+        </a>
+        <button type="button" class="donate-btn zelle" id="zelleBtn" data-email="bellinghampickupsoccer1@gmail.com">
+          <span class="label">Copy Zelle email</span>
+          <span class="handle">bellinghampickupsoccer1<wbr>@gmail.com</span>
+          <span class="hint" id="zelleHint" aria-live="polite"></span>
+        </button>
+      </div>
+    </section>
+
+    <footer>
+      <span id="error" class="error" hidden>Couldn't reach the sheet. Trying again in a minute.</span>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
