@@ -45,11 +45,20 @@ h2 {
 /* ---------- Masthead ---------- */
 .masthead {
   display: flex;
+  flex-wrap: nowrap;          /* logo always stays left of the titles */
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding-bottom: 14px;
   border-bottom: 2px solid var(--chalk);
+}
+.logo { flex: none; width: 56px; height: 56px; border-radius: 50%; display: block; }
+.titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 .masthead h1 {
   margin: 0;
@@ -58,21 +67,12 @@ h2 {
   font-size: 1.6rem;
   line-height: 1.1;
 }
-.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.logo { flex: none; width: 56px; height: 56px; border-radius: 50%; display: block; }
 .masthead p { margin: 0; color: var(--muted); font-size: 0.95rem; text-align: right; }
+
+/* Small screens: title and subtitle stack, still beside the logo */
 @media (max-width: 480px) {
-  /* Logo on the left, title and subtitle stacked beside it */
-  .masthead {
-    display: grid;
-    grid-template-columns: 56px 1fr;
-    column-gap: 12px;
-    row-gap: 2px;
-    align-items: end;
-  }
-  .brand { display: contents; }
-  .logo { grid-row: 1 / span 2; align-self: center; }
-  .masthead p { text-align: left; align-self: start; }
+  .titles { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .masthead p { text-align: left; }
 }
 
 /* ---------- Score ---------- */
