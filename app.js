@@ -98,7 +98,7 @@ function render(balance) {
   cap.dataset.key = key;
   cap.replaceChildren();
   if (pct >= 1) {
-    cap.textContent = `The ${day} field is paid for. See you ${DAY_NAMES[RENTAL_DAY]}.`;
+    cap.textContent = `The ${day} field will be covered. See you ${DAY_NAMES[RENTAL_DAY]}.`;
   } else {
     const strong = document.createElement('strong');
     strong.textContent = needed;
