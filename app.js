@@ -97,7 +97,7 @@ function render(balance) {
   } else {
     const strong = document.createElement('strong');
     strong.textContent = needed;
-    cap.append('Likely on this week', document.createElement('br'), strong, ` needed to cover the ${day} field rental`);
+    cap.append(strong, ` needed to cover the ${day} field rental`);
   }
 }
 
