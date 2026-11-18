@@ -7,7 +7,7 @@ const RENTAL_TZ = 'America/Los_Angeles'; // Apps Script time zone
 const REFRESH_MS = 60 * 1000;
 const RECENT_QUERY =
   "select A, D where C = 'Received' and (B = 'Venmo' or B = 'Zelle' or B = 'Cash') " +
-  'order by A desc limit 7';
+  'order by A desc limit 10';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const $ = id => document.getElementById(id);
@@ -110,7 +110,7 @@ function renderRecent(rows) {
   if (!rows.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = 'No donations yet. Be the first to donate below.';
+    li.textContent = 'No donations yet. Be the first to donate above.';
     ul.append(li);
     return;
   }

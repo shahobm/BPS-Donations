@@ -169,12 +169,15 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 .list li.empty { color: var(--muted); }
-.list li:nth-child(2) { opacity: 0.88; }
-.list li:nth-child(3) { opacity: 0.76; }
-.list li:nth-child(4) { opacity: 0.63; }
-.list li:nth-child(5) { opacity: 0.5; }
-.list li:nth-child(6) { opacity: 0.37; }
-.list li:nth-child(7) { opacity: 0.25; }
+.list li:nth-child(2) { opacity: 0.92; }
+.list li:nth-child(3) { opacity: 0.84; }
+.list li:nth-child(4) { opacity: 0.76; }
+.list li:nth-child(5) { opacity: 0.68; }
+.list li:nth-child(6) { opacity: 0.6; }
+.list li:nth-child(7) { opacity: 0.51; }
+.list li:nth-child(8) { opacity: 0.42; }
+.list li:nth-child(9) { opacity: 0.33; }
+.list li:nth-child(10) { opacity: 0.25; }
 
 /* ---------- Donate ---------- */
 .donate { margin-bottom: 36px; }
