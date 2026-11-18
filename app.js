@@ -5,9 +5,11 @@ const RENTAL_DAY = 3;           // 0 = Sun ... 3 = Wed
 const RENTAL_HOUR = 19, RENTAL_MIN = 30; // matches the Apps Script deduction time
 const RENTAL_TZ = 'America/Los_Angeles'; // Apps Script time zone
 const REFRESH_MS = 60 * 1000;
+const RECENT_COUNT = 10;
+// No "order by" here: rows come back in sheet order (oldest added first),
+// which newestFirst() uses to break ties between same-day donations.
 const RECENT_QUERY =
-  "select A, D where C = 'Received' and (B = 'Venmo' or B = 'Zelle' or B = 'Cash') " +
-  'order by A desc limit 10';
+  "select A, D where C = 'Received' and (B = 'Venmo' or B = 'Zelle' or B = 'Cash')";
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const $ = id => document.getElementById(id);
@@ -37,6 +39,17 @@ function parseGvizDate(v) {
   if (!m) return null;
   const [y, mo, d, h = 0, mi = 0, s = 0] = m[1].split(',').map(Number);
   return new Date(y, mo, d, h, mi, s);
+}
+
+// Newest date first; within the same date/time, the row added to the
+// sheet later (lower down) comes first. Venmo rows are often date-only,
+// so this keeps a single day's donations newest-on-top.
+function newestFirst(rows) {
+  return rows
+    .map((r, i) => ({ r, i, t: parseGvizDate(r[0])?.getTime() ?? -Infinity }))
+    .sort((a, b) => b.t - a.t || b.i - a.i)
+    .slice(0, RECENT_COUNT)
+    .map(x => x.r);
 }
 
 // ===== Formatting =====
@@ -151,7 +164,7 @@ async function refresh() {
     }
 
     if (recent.status === 'fulfilled') {
-      renderRecent(recent.value);
+      renderRecent(newestFirst(recent.value));
     } else {
       ok = false;
       console.error('Recent donations unavailable', recent.reason);
