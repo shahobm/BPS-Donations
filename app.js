@@ -2,6 +2,10 @@
 const SHEET_ID = '1SXCffLjPqWhMqZpEWICJ5F0EewAXHR2xEvG34cjXpAY';
 const GOAL = 250;               // rental cost per week
 const RENTAL_DAY = 3;           // 0 = Sun ... 3 = Wed
+const RENTAL_HOUR = 19, RENTAL_MIN = 30; // matches the Apps Script deduction time
+const RENTAL_TZ = 'America/Los_Angeles';  // Apps Script time zone
+// Wednesdays with no rental. Keep in sync with DEDUCTION_SKIP in the Apps Script.
+const SKIP_DATES = ['2026-11-25'];
 const REFRESH_MS = 60 * 1000;
 const RECENT_COUNT = 10;
 // No "order by" here: rows come back in sheet order (oldest added first),
@@ -66,6 +70,30 @@ function setText(el, text) {
   if (el.textContent !== text) el.textContent = text;
 }
 
+// Upcoming rental day (Pacific time) as {ymd: 'yyyy-mm-dd', date: Date at UTC midnight}.
+// After 7:30 pm on the rental day it moves to the following week.
+function upcomingRentalDay(now = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: RENTAL_TZ, year: 'numeric', month: 'numeric', day: 'numeric',
+    weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+  }).formatToParts(now).map(x => [x.type, x.value]));
+  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday);
+  let add = (RENTAL_DAY - dow + 7) % 7;
+  if (add === 0 && Number(p.hour) * 60 + Number(p.minute) >= RENTAL_HOUR * 60 + RENTAL_MIN) add = 7;
+  const date = new Date(Date.UTC(+p.year, +p.month - 1, +p.day + add));
+  return { date, ymd: date.toISOString().slice(0, 10) };
+}
+
+// If this week's rental is skipped: {skipped, next} labels like "Nov 25" / "Dec 2"; else null
+function skipNotice() {
+  const { date, ymd } = upcomingRentalDay();
+  if (!SKIP_DATES.includes(ymd)) return null;
+  const next = new Date(date);
+  do next.setUTCDate(next.getUTCDate() + 7);
+  while (SKIP_DATES.includes(next.toISOString().slice(0, 10)));
+  return { skipped: shortDate(date, 'UTC'), next: shortDate(next, 'UTC') };
+}
+
 // ===== Rendering =====
 function render(balance) {
   const pct = Math.max(0, Math.min(1, balance / GOAL));
@@ -82,12 +110,15 @@ function render(balance) {
 
   const cap = $('caption');
   const needed = money.format(GOAL - Math.round(balance)); // matches the rounded total shown
-  const key = pct >= 1 ? 'paid' : `need:${needed}`;
+  const skip = skipNotice();
+  const key = (pct >= 1 ? 'paid' : `need:${needed}`) + (skip ? `:skip:${skip.skipped}` : '');
   if (cap.dataset.key === key) return;
   cap.dataset.key = key;
   cap.replaceChildren();
   if (pct >= 1) {
-    cap.textContent = `The next field rental will be covered. See you ${DAY_NAMES[RENTAL_DAY]}.`;
+    cap.textContent = skip
+      ? 'The next field rental will be covered.'
+      : `The next field rental will be covered. See you ${DAY_NAMES[RENTAL_DAY]}.`;
   } else {
     const strong = document.createElement('strong');
     strong.textContent = needed;

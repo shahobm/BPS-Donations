@@ -8,6 +8,11 @@ const VENMO_FEE_FIXED = 0.10;    // plus $0.10 per received payment
 const DEDUCTION_AMOUNT = 250;
 const DEDUCTION_START = '2026-11-11'; // first Wednesday to charge
 const DEDUCTION_LABEL = 'Weekly deduction';
+// Wednesdays with no field rental, so no deduction (yyyy-MM-dd).
+// Add a date here before that Wednesday's 7:30 pm deduction would run.
+const DEDUCTION_SKIP = [
+  '2026-11-25', // no rental this week
+];
 
 // Only look at recent emails each run. Older ones are already in the sheet,
 // and re-reading every email every 10 minutes exceeds Gmail's daily quota.
@@ -213,8 +218,9 @@ function collectDeductions(seen) {
   while (day.getDay() !== 3) day.setDate(day.getDate() + 1); // align to Wednesday
 
   while (day <= now) {
-    const id = 'DEDUCT-' + Utilities.formatDate(day, tz, 'yyyy-MM-dd');
-    if (!seen.has(id)) {
+    const ymd = Utilities.formatDate(day, tz, 'yyyy-MM-dd');
+    const id = 'DEDUCT-' + ymd;
+    if (!DEDUCTION_SKIP.includes(ymd) && !seen.has(id)) {
       seen.add(id);
       rows.push([new Date(day), 'Scheduled', 'Deduction', DEDUCTION_LABEL, -DEDUCTION_AMOUNT, '', id, 0, -DEDUCTION_AMOUNT]);
     }
