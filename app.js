@@ -2,8 +2,6 @@
 const SHEET_ID = '1SXCffLjPqWhMqZpEWICJ5F0EewAXHR2xEvG34cjXpAY';
 const GOAL = 250;               // rental cost per week
 const RENTAL_DAY = 3;           // 0 = Sun ... 3 = Wed
-const RENTAL_HOUR = 19, RENTAL_MIN = 30; // matches the Apps Script deduction time
-const RENTAL_TZ = 'America/Los_Angeles'; // Apps Script time zone
 const REFRESH_MS = 60 * 1000;
 const RECENT_COUNT = 10;
 // No "order by" here: rows come back in sheet order (oldest added first),
@@ -62,22 +60,6 @@ function shortDate(d, timeZone) {
   return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone }) : '';
 }
 
-// Next rental date label (e.g. "Nov 11"), computed on Pacific time so every
-// viewer sees the date roll over when the Apps Script deduction does.
-function nextRentalLabel(now = new Date()) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: RENTAL_TZ, year: 'numeric', month: 'numeric', day: 'numeric',
-      weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
-    }).formatToParts(now).map(p => [p.type, p.value]));
-  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  let add = (RENTAL_DAY - dow + 7) % 7;
-  if (add === 0 && minutes >= RENTAL_HOUR * 60 + RENTAL_MIN) add = 7; // past tonight's rental
-  const d = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + add));
-  return shortDate(d, 'UTC');
-}
-
 // Only touch the DOM when text actually changes, so screen readers
 // (aria-live) don't re-announce identical values every refresh.
 function setText(el, text) {
@@ -98,19 +80,18 @@ function render(balance) {
   track.setAttribute('aria-valuenow', Math.max(0, Math.min(GOAL, balance)));
   track.setAttribute('aria-valuetext', `${money.format(balance)} of ${money.format(GOAL)}`);
 
-  const day = nextRentalLabel();
   const cap = $('caption');
   const needed = money.format(GOAL - Math.round(balance)); // matches the rounded total shown
-  const key = pct >= 1 ? `paid:${day}` : `need:${needed}:${day}`;
+  const key = pct >= 1 ? 'paid' : `need:${needed}`;
   if (cap.dataset.key === key) return;
   cap.dataset.key = key;
   cap.replaceChildren();
   if (pct >= 1) {
-    cap.textContent = `The ${day} field will be covered. See you ${DAY_NAMES[RENTAL_DAY]}.`;
+    cap.textContent = `The next field rental will be covered. See you ${DAY_NAMES[RENTAL_DAY]}.`;
   } else {
     const strong = document.createElement('strong');
     strong.textContent = needed;
-    cap.append(strong, ` needed to cover the ${day} field rental`);
+    cap.append(strong, ' needed to cover the next field rental');
   }
 }
 
