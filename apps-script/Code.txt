@@ -9,15 +9,26 @@ const DEDUCTION_AMOUNT = 250;
 const DEDUCTION_START = '2026-11-11'; // first Wednesday to charge
 const DEDUCTION_LABEL = 'Weekly deduction';
 
-const VENMO_QUERY =
+// Only look at recent emails each run. Older ones are already in the sheet,
+// and re-reading every email every 10 minutes exceeds Gmail's daily quota.
+// If the script is ever down longer than this, raise it for one run.
+const LOOKBACK = 'newer_than:3d';
+
+const VENMO_BASE_QUERY =
   '(from:shahobmmousavi@gmail.com OR from:venmo@venmo.com) ' +
   '(subject:"paid you" OR subject:"you paid" OR subject:"to your Venmo account")';
+const ZELLE_BASE_QUERY = 'from:donotreply@eservices.peoplesbank-wa.com subject:"sent you"';
+
+// Gmail message IDs already looked at, so they're skipped without reading
+// their contents again (saves most of the Gmail quota).
+const DONE_KEY = 'doneMsgIds';
+const DONE_MAX = 400; // keeps the stored list under the 9 KB property limit
 
 // ===== Setup =====
 function setup() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('logPayments').timeBased().everyMinutes(10).create();
-  logPayments(); // initial backfill
+  logPayments(); // initial run
 }
 
 // ===== Main (runs every 10 minutes) =====
@@ -40,14 +51,33 @@ function logPayments() {
     const seen = new Set(last > 1
       ? sh.getRange(2, 7, last - 1, 1).getValues().flat().map(String) : []);
 
-    const rows = [].concat(collectVenmo(seen), collectZelle(seen), collectDeductions(seen));
+    const props = PropertiesService.getScriptProperties();
+    const doneList = JSON.parse(props.getProperty(DONE_KEY) || '[]');
+    const done = new Set(doneList);
+    const newlyDone = [];
+
+    const rows = [].concat(
+      collectVenmo(seen, done, newlyDone),
+      collectZelle(seen, done, newlyDone),
+      collectDeductions(seen));
     if (rows.length) {
       rows.sort((a, b) => a[0] - b[0]);
       sh.getRange(sh.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
     }
+
+    // Saved only after the rows are written, so a failed run retries these emails
+    if (newlyDone.length) {
+      props.setProperty(DONE_KEY, JSON.stringify(doneList.concat(newlyDone).slice(-DONE_MAX)));
+    }
   } finally {
     lock.releaseLock();
   }
+}
+
+// Recent messages for a search, using one batched Gmail call for all threads
+function recentMessages(query) {
+  const threads = GmailApp.search(query + ' ' + LOOKBACK, 0, 100);
+  return threads.length ? GmailApp.getMessagesForThreads(threads).flat() : [];
 }
 
 // ===== Fee helpers =====
@@ -102,13 +132,13 @@ function venmoWhen(msg, text) {
 }
 
 // ===== Venmo (forwarded from shahobmmousavi@gmail.com, or direct from Venmo) =====
-function collectVenmo(seen) {
+function collectVenmo(seen, done, newlyDone) {
   const rows = [];
-  const threads = GmailApp.search(VENMO_QUERY, 0, 200);
-
-  threads.forEach(th => th.getMessages().forEach(msg => {
-    const body = msg.getBody();
-    const text = htmlToText(body);
+  recentMessages(VENMO_BASE_QUERY).forEach(msg => {
+    const msgId = msg.getId();
+    if (done.has(msgId)) return; // already handled on an earlier run
+    done.add(msgId);
+    newlyDone.push(msgId);
 
     // Strip any "Fwd:" / "Re:" prefixes before matching
     const subj = msg.getSubject().replace(/^\s*((fwd?|re):\s*)+/i, '').trim();
@@ -120,6 +150,9 @@ function collectVenmo(seen) {
     } else if ((m = subj.match(/^(.+?) paid \$([\d,]+\.\d{2}) to your Venmo account/))) {
       dir = 'Received'; cp = m[1]; amt = parseFloat(m[2].replace(/,/g, ''));
     } else return;
+
+    const body = msg.getBody();
+    const text = htmlToText(body);
 
     // Only accept transactions sent to the target Venmo handle
     const sentTo = ((body.match(/Sent to<\/h3>\s*<p[^>]*>\s*(@[\w.-]+)\s*</i) || [])[1] || '').toLowerCase();
@@ -139,67 +172,33 @@ function collectVenmo(seen) {
     const when = venmoWhen(msg, text);
     const fee = dir === 'Received' ? venmoFee(amt) : 0;
     rows.push([when, 'Venmo', dir, cp, amt, note, id, fee, round2(amt - fee)]);
-  }));
+  });
   return rows;
 }
 
-// ===== One-time: add times to existing date-only Venmo rows =====
-// Run manually once from the editor (select backfillVenmoTimes > Run).
-// Only touches Venmo rows whose time is exactly midnight; safe to re-run.
-function backfillVenmoTimes() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('logPayments is running; try again in a minute.');
-  try {
-    const sh = SpreadsheetApp.getActive().getSheetByName('Transactions');
-    const last = sh.getLastRow();
-    if (last < 2) return;
-    const range = sh.getRange(2, 1, last - 1, 7); // A..G
-    const data = range.getValues();
-
-    // Map transaction ID -> timestamp from the emails still in Gmail
-    const times = {};
-    GmailApp.search(VENMO_QUERY, 0, 500).forEach(th => th.getMessages().forEach(msg => {
-      const body = msg.getBody();
-      times[venmoId(body, msg)] = venmoWhen(msg, htmlToText(body));
-    }));
-
-    let updated = 0;
-    const dates = data.map(r => {
-      const d = r[0], id = String(r[6]);
-      const dateOnly = d instanceof Date &&
-        d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0;
-      if (r[1] === 'Venmo' && dateOnly && times[id] instanceof Date && times[id].getTime() !== d.getTime()) {
-        updated++;
-        return [times[id]];
-      }
-      return [d];
-    });
-    if (updated) sh.getRange(2, 1, dates.length, 1).setValues(dates);
-    Logger.log('Venmo rows updated with times: ' + updated);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
 // ===== Zelle (Peoples Bank) =====
-function collectZelle(seen) {
+function collectZelle(seen, done, newlyDone) {
   const rows = [];
-  const threads = GmailApp.search('from:donotreply@eservices.peoplesbank-wa.com subject:"sent you"', 0, 200);
-  threads.forEach(th => th.getMessages().forEach(msg => {
+  recentMessages(ZELLE_BASE_QUERY).forEach(msg => {
+    const msgId = msg.getId();
+    if (done.has(msgId)) return; // already handled on an earlier run
+    done.add(msgId);
+    newlyDone.push(msgId);
+
     const subj = msg.getSubject();
     const m = subj.match(/sent you \$([\d,]+\.\d{2})/i);
     const who = subj.match(/Notification - (.+?) sent you/i);
     if (!m || !who) return;
 
     const text = htmlToText(msg.getBody());
-    const id = ((text.match(/AlertID\s*\((\d+)\)/i) || [])[1]) || msg.getId();
+    const id = ((text.match(/AlertID\s*\((\d+)\)/i) || [])[1]) || msgId;
     if (seen.has(id)) return;
     seen.add(id);
 
     const note = ((text.match(/your account\.\s*((?:(?!your account\.)[\s\S])*?)\s*Access Account/i) || [])[1] || '').trim();
     const amt = parseFloat(m[1].replace(/,/g, ''));
     rows.push([msg.getDate(), 'Zelle', 'Received', who[1], amt, note, id, 0, amt]);
-  }));
+  });
   return rows;
 }
 
@@ -222,6 +221,46 @@ function collectDeductions(seen) {
     day.setDate(day.getDate() + 7);
   }
   return rows;
+}
+
+// ===== Optional, run once by hand: add times to existing date-only Venmo rows =====
+// Reads every Venmo email (not just recent ones), so it uses a lot of Gmail quota.
+// Run it only after the daily quota has reset, and only once.
+function backfillVenmoTimes() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('logPayments is running; try again in a minute.');
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName('Transactions');
+    const last = sh.getLastRow();
+    if (last < 2) return;
+    const data = sh.getRange(2, 1, last - 1, 7).getValues(); // A..G
+
+    // Only rows that still need a time
+    const needs = new Set(data
+      .filter(r => r[1] === 'Venmo' && r[0] instanceof Date &&
+        r[0].getHours() === 0 && r[0].getMinutes() === 0 && r[0].getSeconds() === 0)
+      .map(r => String(r[6])));
+    if (!needs.size) { Logger.log('Nothing to update'); return; }
+
+    const threads = GmailApp.search(VENMO_BASE_QUERY, 0, 500);
+    const times = {};
+    GmailApp.getMessagesForThreads(threads).flat().forEach(msg => {
+      const body = msg.getBody();
+      const id = venmoId(body, msg);
+      if (needs.has(id)) times[id] = venmoWhen(msg, htmlToText(body));
+    });
+
+    let updated = 0;
+    const dates = data.map(r => {
+      const t = times[String(r[6])];
+      if (t instanceof Date && t.getTime() !== r[0].getTime()) { updated++; return [t]; }
+      return [r[0]];
+    });
+    if (updated) sh.getRange(2, 1, dates.length, 1).setValues(dates);
+    Logger.log('Venmo rows updated with times: ' + updated);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ===== Helpers =====

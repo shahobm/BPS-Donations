@@ -146,7 +146,6 @@ let refreshing = false;
 async function refresh() {
   if (refreshing || document.hidden) return; // no overlap, no background polling
   refreshing = true;
-  setText($('nextLabel'), `${nextRentalLabel()} Rental`);
   try {
     // Fetched independently so one failing doesn't hide the other
     const [bal, recent] = await Promise.allSettled([
